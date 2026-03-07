@@ -1,7 +1,6 @@
 name: Notify on Telegram
 
 on:
-  fork:
   push:
   release:
     types: published
