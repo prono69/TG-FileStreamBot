@@ -4,7 +4,6 @@ ARG TARGETARCH
 WORKDIR /app
 COPY . .
 RUN go get github.com/shirou/gopsutil/v3
-RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /app/fsb -ldflags="-w -s" ./cmd/fsb
 
 FROM alpine:3.21
