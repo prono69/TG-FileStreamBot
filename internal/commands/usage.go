@@ -12,7 +12,6 @@ import (
 	"github.com/celestix/gotgproto/dispatcher"
 	"github.com/celestix/gotgproto/dispatcher/handlers"
 	"github.com/celestix/gotgproto/ext"
-	"github.com/celestix/gotgproto/storage"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
@@ -27,7 +26,7 @@ func (m *command) LoadUsage(dispatcher dispatcher.Dispatcher) {
 	dispatcher.AddHandler(handlers.NewCommand("usage", usage))
 }
 
-// ---------------- UTIL ----------------
+// ---------- utils ----------
 
 func formatBytes(bytes uint64) string {
 	if bytes == 0 {
@@ -54,32 +53,30 @@ func formatUptime(d time.Duration) string {
 	return fmt.Sprintf("%dh %dm %ds", hours, minutes, seconds)
 }
 
-// ---------------- COMMAND ----------------
+// ---------- command ----------
 
 func usage(ctx *ext.Context, u *ext.Update) error {
 	defer func() {
 		if r := recover(); r != nil {
-			ctx.Reply(u, ext.ReplyTextString("⚠️ Error fetching stats"), nil)
+			ctx.Reply(u, ext.ReplyTextString("⚠️ Failed to fetch usage stats"), nil)
 		}
 	}()
 
 	chatId := u.EffectiveChat().GetID()
-	peerChatId := ctx.PeerStorage.GetPeerById(chatId)
 
-	// Only allow private chats
-	if peerChatId.Type != int(storage.TypeUser) {
+	// ✅ Safe private check (no PeerStorage bug)
+	if u.EffectiveChat().GetType() != "private" {
 		return dispatcher.EndGroups
 	}
 
-	// Allowed users check
+	// ✅ Allowed users
 	if len(config.ValueOf.AllowedUsers) != 0 && !utils.Contains(config.ValueOf.AllowedUsers, chatId) {
 		ctx.Reply(u, ext.ReplyTextString("You are not allowed to use this bot."), nil)
 		return dispatcher.EndGroups
 	}
 
-	// ---------------- STATS ----------------
+	// ---------- stats ----------
 
-	// CPU (non-blocking)
 	cpuPercent, _ := cpu.Percent(0, false)
 	cpuCount, _ := cpu.Counts(true)
 	cpuUsage := 0.0
@@ -87,13 +84,9 @@ func usage(ctx *ext.Context, u *ext.Update) error {
 		cpuUsage = cpuPercent[0]
 	}
 
-	// Memory
 	memStats, _ := mem.VirtualMemory()
-
-	// Disk
 	diskStats, _ := disk.Usage("/")
 
-	// Network
 	netStats, _ := net.IOCounters(false)
 	var bytesSent, bytesRecv uint64
 	if len(netStats) > 0 {
@@ -101,23 +94,16 @@ func usage(ctx *ext.Context, u *ext.Update) error {
 		bytesRecv = netStats[0].BytesRecv
 	}
 
-	// Go runtime
 	var rtm runtime.MemStats
 	runtime.ReadMemStats(&rtm)
 
-	// Uptime
 	uptime := time.Since(startTime)
-
-	// Goroutines
 	goroutines := runtime.NumGoroutine()
 
-	// ---------------- SERVER CHECK ----------------
+	// ---------- server check ----------
 
 	serverStatus := "🔴 Offline"
-
-	client := http.Client{
-		Timeout: 3 * time.Second,
-	}
+	client := http.Client{Timeout: 3 * time.Second}
 
 	resp, err := client.Get("https://ddl.ichigo.eu.org")
 	if err == nil && resp.StatusCode < 500 {
@@ -126,7 +112,7 @@ func usage(ctx *ext.Context, u *ext.Update) error {
 		serverStatus = "🟡 Unreachable"
 	}
 
-	// ---------------- MESSAGE ----------------
+	// ---------- message ----------
 
 	msg := fmt.Sprintf(
 		"📊 **FSB Usage Stats**\n"+
@@ -147,7 +133,7 @@ func usage(ctx *ext.Context, u *ext.Update) error {
 			"├ Used:  `%s / %s`\n"+
 			"└ Usage: `%.1f%%`\n\n"+
 
-			"🌐 **Network** (since boot)\n"+
+			"🌐 **Network**\n"+
 			"├ Upload:   `%s`\n"+
 			"└ Download: `%s`\n\n"+
 
@@ -161,23 +147,11 @@ func usage(ctx *ext.Context, u *ext.Update) error {
 			"━━━━━━━━━━━━━━━━━━",
 
 		formatUptime(uptime),
-
-		cpuCount,
-		cpuUsage,
-
-		formatBytes(memStats.Used), formatBytes(memStats.Total),
-		memStats.UsedPercent,
-
-		formatBytes(diskStats.Used), formatBytes(diskStats.Total),
-		diskStats.UsedPercent,
-
-		formatBytes(bytesSent),
-		formatBytes(bytesRecv),
-
-		runtime.Version(),
-		goroutines,
-		formatBytes(rtm.HeapAlloc),
-
+		cpuCount, cpuUsage,
+		formatBytes(memStats.Used), formatBytes(memStats.Total), memStats.UsedPercent,
+		formatBytes(diskStats.Used), formatBytes(diskStats.Total), diskStats.UsedPercent,
+		formatBytes(bytesSent), formatBytes(bytesRecv),
+		runtime.Version(), goroutines, formatBytes(rtm.HeapAlloc),
 		serverStatus,
 	)
 
