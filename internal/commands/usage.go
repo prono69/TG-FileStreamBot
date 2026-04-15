@@ -21,13 +21,15 @@ import (
 
 var startTime = time.Now()
 
+// ---------- LOADER ----------
+
 func (m *command) LoadUsage(dispatcher dispatcher.Dispatcher) {
 	log := m.log.Named("usage")
 	defer log.Sugar().Info("Loaded")
 	dispatcher.AddHandler(handlers.NewCommand("usage", usage))
 }
 
-// ---------- utils ----------
+// ---------- UTILS ----------
 
 func formatBytes(bytes uint64) string {
 	if bytes == 0 {
@@ -54,7 +56,7 @@ func formatUptime(d time.Duration) string {
 	return fmt.Sprintf("%dh %dm %ds", hours, minutes, seconds)
 }
 
-// ---------- command ----------
+// ---------- COMMAND ----------
 
 func usage(ctx *ext.Context, u *ext.Update) error {
 	defer func() {
@@ -65,77 +67,135 @@ func usage(ctx *ext.Context, u *ext.Update) error {
 
 	chatId := u.EffectiveChat().GetID()
 
-	// ✅ SAFE PeerStorage check
+	// ✅ Safe PeerStorage check
 	peer := ctx.PeerStorage.GetPeerById(chatId)
-	if peer == nil || peer.Type == 0 {
-		// fallback → allow instead of blocking
-	} else if peer.Type != int(storage.TypeUser) {
+	if peer != nil && peer.Type != 0 && peer.Type != int(storage.TypeUser) {
 		return dispatcher.EndGroups
 	}
 
-	// Allowed users
+	// ✅ Allowed users
 	if len(config.ValueOf.AllowedUsers) != 0 && !utils.Contains(config.ValueOf.AllowedUsers, chatId) {
 		ctx.Reply(u, ext.ReplyTextString("You are not allowed to use this bot."), nil)
 		return dispatcher.EndGroups
 	}
 
-	// ---------- stats ----------
+	// ---------- SAFE STATS ----------
 
-	cpuPercent, _ := cpu.Percent(0, false)
-	cpuCount, _ := cpu.Counts(true)
+	// CPU
 	cpuUsage := 0.0
-	if len(cpuPercent) > 0 {
-		cpuUsage = cpuPercent[0]
+	cpuCount := 0
+
+	if c, err := cpu.Counts(true); err == nil {
+		cpuCount = c
 	}
 
-	memStats, _ := mem.VirtualMemory()
-	diskStats, _ := disk.Usage("/")
+	if p, err := cpu.Percent(0, false); err == nil && len(p) > 0 {
+		cpuUsage = p[0]
+	}
 
-	netStats, _ := net.IOCounters(false)
+	// Memory
+	var memUsed, memTotal uint64
+	var memPercent float64
+
+	if m, err := mem.VirtualMemory(); err == nil {
+		memUsed = m.Used
+		memTotal = m.Total
+		memPercent = m.UsedPercent
+	}
+
+	// Disk
+	var diskUsed, diskTotal uint64
+	var diskPercent float64
+
+	if d, err := disk.Usage("/"); err == nil {
+		diskUsed = d.Used
+		diskTotal = d.Total
+		diskPercent = d.UsedPercent
+	}
+
+	// Network
 	var bytesSent, bytesRecv uint64
-	if len(netStats) > 0 {
-		bytesSent = netStats[0].BytesSent
-		bytesRecv = netStats[0].BytesRecv
+
+	if n, err := net.IOCounters(false); err == nil && len(n) > 0 {
+		bytesSent = n[0].BytesSent
+		bytesRecv = n[0].BytesRecv
 	}
 
+	// Runtime
 	var rtm runtime.MemStats
 	runtime.ReadMemStats(&rtm)
 
 	uptime := time.Since(startTime)
 	goroutines := runtime.NumGoroutine()
 
-	// ---------- server check ----------
+	// ---------- SERVER CHECK ----------
 
 	serverStatus := "🔴 Offline"
 	client := http.Client{Timeout: 3 * time.Second}
 
-	resp, err := client.Get("https://ddl.ichigo.eu.org")
-	if err == nil && resp.StatusCode < 500 {
-		serverStatus = "🟢 Online"
-	} else if err != nil {
+	if resp, err := client.Get("https://ddl.ichigo.eu.org"); err == nil {
+		if resp.StatusCode < 500 {
+			serverStatus = "🟢 Online"
+		}
+	} else {
 		serverStatus = "🟡 Unreachable"
 	}
 
-	// ---------- message ----------
+	// ---------- MESSAGE ----------
 
 	msg := fmt.Sprintf(
 		"📊 **FSB Usage Stats**\n"+
 			"━━━━━━━━━━━━━━━━━━\n\n"+
-			"⏱ **Uptime**\n└ `%s`\n\n"+
-			"🖥 **CPU**\n├ Cores: `%d`\n└ Usage: `%.1f%%`\n\n"+
-			"🧠 **Memory**\n├ `%s / %s`\n└ `%.1f%%`\n\n"+
-			"💾 **Disk**\n├ `%s / %s`\n└ `%.1f%%`\n\n"+
-			"🌐 **Network**\n├ Upload: `%s`\n└ Download: `%s`\n\n"+
-			"⚙️ **Runtime**\n├ `%s`\n├ Goroutines: `%d`\n└ Heap: `%s`\n\n"+
-			"🤖 **Server**\n└ %s\n"+
+
+			"⏱ **Uptime**\n"+
+			"└ `%s`\n\n"+
+
+			"🖥 **CPU**\n"+
+			"├ Cores: `%d`\n"+
+			"└ Usage: `%.1f%%`\n\n"+
+
+			"🧠 **Memory**\n"+
+			"├ `%s / %s`\n"+
+			"└ `%.1f%%`\n\n"+
+
+			"💾 **Disk**\n"+
+			"├ `%s / %s`\n"+
+			"└ `%.1f%%`\n\n"+
+
+			"🌐 **Network**\n"+
+			"├ Upload: `%s`\n"+
+			"└ Download: `%s`\n\n"+
+
+			"⚙️ **Runtime**\n"+
+			"├ `%s`\n"+
+			"├ Goroutines: `%d`\n"+
+			"└ Heap: `%s`\n\n"+
+
+			"🤖 **Server**\n"+
+			"└ %s\n"+
+
 			"━━━━━━━━━━━━━━━━━━",
 
 		formatUptime(uptime),
-		cpuCount, cpuUsage,
-		formatBytes(memStats.Used), formatBytes(memStats.Total), memStats.UsedPercent,
-		formatBytes(diskStats.Used), formatBytes(diskStats.Total), diskStats.UsedPercent,
-		formatBytes(bytesSent), formatBytes(bytesRecv),
-		runtime.Version(), goroutines, formatBytes(rtm.HeapAlloc),
+
+		cpuCount,
+		cpuUsage,
+
+		formatBytes(memUsed),
+		formatBytes(memTotal),
+		memPercent,
+
+		formatBytes(diskUsed),
+		formatBytes(diskTotal),
+		diskPercent,
+
+		formatBytes(bytesSent),
+		formatBytes(bytesRecv),
+
+		runtime.Version(),
+		goroutines,
+		formatBytes(rtm.HeapAlloc),
+
 		serverStatus,
 	)
 
