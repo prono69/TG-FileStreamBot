@@ -12,6 +12,7 @@ import (
 	"github.com/celestix/gotgproto/dispatcher"
 	"github.com/celestix/gotgproto/dispatcher/handlers"
 	"github.com/celestix/gotgproto/ext"
+	"github.com/celestix/gotgproto/storage"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
@@ -64,12 +65,15 @@ func usage(ctx *ext.Context, u *ext.Update) error {
 
 	chatId := u.EffectiveChat().GetID()
 
-	// ✅ Safe private check (no PeerStorage bug)
-	if u.EffectiveChat().GetType() != "private" {
+	// ✅ SAFE PeerStorage check
+	peer := ctx.PeerStorage.GetPeerById(chatId)
+	if peer == nil || peer.Type == 0 {
+		// fallback → allow instead of blocking
+	} else if peer.Type != int(storage.TypeUser) {
 		return dispatcher.EndGroups
 	}
 
-	// ✅ Allowed users
+	// Allowed users
 	if len(config.ValueOf.AllowedUsers) != 0 && !utils.Contains(config.ValueOf.AllowedUsers, chatId) {
 		ctx.Reply(u, ext.ReplyTextString("You are not allowed to use this bot."), nil)
 		return dispatcher.EndGroups
@@ -117,33 +121,13 @@ func usage(ctx *ext.Context, u *ext.Update) error {
 	msg := fmt.Sprintf(
 		"📊 **FSB Usage Stats**\n"+
 			"━━━━━━━━━━━━━━━━━━\n\n"+
-
-			"⏱ **Uptime**\n"+
-			"└ `%s`\n\n"+
-
-			"🖥 **CPU**\n"+
-			"├ Cores: `%d`\n"+
-			"└ Usage: `%.1f%%`\n\n"+
-
-			"🧠 **Memory**\n"+
-			"├ Used:  `%s / %s`\n"+
-			"└ Usage: `%.1f%%`\n\n"+
-
-			"💾 **Disk**\n"+
-			"├ Used:  `%s / %s`\n"+
-			"└ Usage: `%.1f%%`\n\n"+
-
-			"🌐 **Network**\n"+
-			"├ Upload:   `%s`\n"+
-			"└ Download: `%s`\n\n"+
-
-			"⚙️ **Runtime**\n"+
-			"├ Go Version:  `%s`\n"+
-			"├ Goroutines:  `%d`\n"+
-			"└ Heap Alloc:  `%s`\n\n"+
-
-			"🤖 **Server**\n"+
-			"└ Status: %s\n"+
+			"⏱ **Uptime**\n└ `%s`\n\n"+
+			"🖥 **CPU**\n├ Cores: `%d`\n└ Usage: `%.1f%%`\n\n"+
+			"🧠 **Memory**\n├ `%s / %s`\n└ `%.1f%%`\n\n"+
+			"💾 **Disk**\n├ `%s / %s`\n└ `%.1f%%`\n\n"+
+			"🌐 **Network**\n├ Upload: `%s`\n└ Download: `%s`\n\n"+
+			"⚙️ **Runtime**\n├ `%s`\n├ Goroutines: `%d`\n└ Heap: `%s`\n\n"+
+			"🤖 **Server**\n└ %s\n"+
 			"━━━━━━━━━━━━━━━━━━",
 
 		formatUptime(uptime),

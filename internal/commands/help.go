@@ -7,6 +7,7 @@ import (
 	"github.com/celestix/gotgproto/dispatcher"
 	"github.com/celestix/gotgproto/dispatcher/handlers"
 	"github.com/celestix/gotgproto/ext"
+	"github.com/celestix/gotgproto/storage"
 )
 
 func (m *command) LoadHelp(dispatcher dispatcher.Dispatcher) {
@@ -18,12 +19,11 @@ func (m *command) LoadHelp(dispatcher dispatcher.Dispatcher) {
 func help(ctx *ext.Context, u *ext.Update) error {
 	chatId := u.EffectiveChat().GetID()
 
-	// Only private chats
-	if u.EffectiveChat().GetType() != "private" {
+	peer := ctx.PeerStorage.GetPeerById(chatId)
+	if peer != nil && peer.Type != int(storage.TypeUser) {
 		return dispatcher.EndGroups
 	}
 
-	// Allowed users
 	if len(config.ValueOf.AllowedUsers) != 0 && !utils.Contains(config.ValueOf.AllowedUsers, chatId) {
 		ctx.Reply(u, ext.ReplyTextString("You are not allowed to use this bot."), nil)
 		return dispatcher.EndGroups
