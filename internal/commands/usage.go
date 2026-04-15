@@ -27,6 +27,8 @@ func (m *command) LoadUsage(dispatcher dispatcher.Dispatcher) {
 	dispatcher.AddHandler(handlers.NewCommand("usage", usage))
 }
 
+// ---------------- UTIL ----------------
+
 func formatBytes(bytes uint64) string {
 	if bytes == 0 {
 		return "0 B"
@@ -45,25 +47,40 @@ func formatUptime(d time.Duration) string {
 	hours := int(d.Hours()) % 24
 	minutes := int(d.Minutes()) % 60
 	seconds := int(d.Seconds()) % 60
+
 	if days > 0 {
 		return fmt.Sprintf("%dd %dh %dm %ds", days, hours, minutes, seconds)
 	}
 	return fmt.Sprintf("%dh %dm %ds", hours, minutes, seconds)
 }
 
+// ---------------- COMMAND ----------------
+
 func usage(ctx *ext.Context, u *ext.Update) error {
+	defer func() {
+		if r := recover(); r != nil {
+			ctx.Reply(u, ext.ReplyTextString("⚠️ Error fetching stats"), nil)
+		}
+	}()
+
 	chatId := u.EffectiveChat().GetID()
 	peerChatId := ctx.PeerStorage.GetPeerById(chatId)
+
+	// Only allow private chats
 	if peerChatId.Type != int(storage.TypeUser) {
 		return dispatcher.EndGroups
 	}
+
+	// Allowed users check
 	if len(config.ValueOf.AllowedUsers) != 0 && !utils.Contains(config.ValueOf.AllowedUsers, chatId) {
 		ctx.Reply(u, ext.ReplyTextString("You are not allowed to use this bot."), nil)
 		return dispatcher.EndGroups
 	}
 
-	// CPU
-	cpuPercent, _ := cpu.Percent(time.Second, false)
+	// ---------------- STATS ----------------
+
+	// CPU (non-blocking)
+	cpuPercent, _ := cpu.Percent(0, false)
 	cpuCount, _ := cpu.Counts(true)
 	cpuUsage := 0.0
 	if len(cpuPercent) > 0 {
@@ -94,12 +111,22 @@ func usage(ctx *ext.Context, u *ext.Update) error {
 	// Goroutines
 	goroutines := runtime.NumGoroutine()
 
-	// HTTP server check (check if port is alive)
-	serverStatus := "🟢 Online"
-	_, err := http.Get(fmt.Sprintf("http://localhost:%d/health", config.ValueOf.Port))
-	if err != nil {
-		serverStatus = "🟡 Unknown"
+	// ---------------- SERVER CHECK ----------------
+
+	serverStatus := "🔴 Offline"
+
+	client := http.Client{
+		Timeout: 3 * time.Second,
 	}
+
+	resp, err := client.Get("https://ddl.ichigo.eu.org")
+	if err == nil && resp.StatusCode < 500 {
+		serverStatus = "🟢 Online"
+	} else if err != nil {
+		serverStatus = "🟡 Unreachable"
+	}
+
+	// ---------------- MESSAGE ----------------
 
 	msg := fmt.Sprintf(
 		"📊 **FSB Usage Stats**\n"+
